@@ -1,0 +1,10 @@
+name = "metabench"
+version = "0.1.0"
+defaultTargets = ["MetaBench"]
+
+[leanOptions]
+autoImplicit = false
+pp.fieldNotation = false
+
+[[lean_lib]]
+name = "MetaBench"
