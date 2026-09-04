@@ -10,13 +10,19 @@ The `#benchmark` command is used to benchmark elaboration, proof construction, a
 `theorem` or `example` declarations. It reports the total wall-clock time and heartbeat cost of all
 three phases.
 
-
 ```
-/-- info: twice: 31.7 kHB, 1.64 ms -/
+/--
+info: example:
+goal   27.29 kHB 1.30 ms
+proof   3.72 kHB 0.58 ms
+kernel  0.93 kHB 0.16 ms
+total  31.94 kHB 2.04 ms
+-/
 #guard_msgs in
-#benchmark "test" in
+#benchmark in
 example : (2 : Nat) ^ 10 = 1024 := by decide
 ```
+
 -/
 
 open Lean Elab Command Term Meta
@@ -72,17 +78,22 @@ meta def kernelCheck (decl : Declaration) : TermElabM Unit := do
 
 /-- Benchmark a single theorem. Returns the elapsed `Sample` and the checked theorem. -/
 meta def benchmark (declName : Name) (binders : Array Syntax) (goalStx proofStx : Syntax)
-  (levelNames : List Name := []) : TermElabM (Sample × Declaration) :=
+  (levelNames : List Name := []) : TermElabM (PhaseSamples × Declaration) :=
   Term.withoutErrToSorry <| Term.withDeclName declName <| Term.withLevelNames levelNames do
-    let start ← Sample.now
-    let decl ← Term.elabBinders binders fun fvars => do
+    let s0 ← Sample.now
+    Term.elabBinders binders fun fvars => do
       let goal ← elabGoal goalStx
+      let s1 ← Sample.now
       let proof ← elabProof proofStx goal
       let decl ← mkTheorem declName fvars goal proof
+      let s2 ← Sample.now
       kernelCheck decl
-      pure decl
-    let stop ← Sample.now
-    return (stop.sub start, decl)
+      let s3 ← Sample.now
+      let phases := fun
+        | .goal => s1.sub s0
+        | .proof => s2.sub s1
+        | .kernel => s3.sub s2
+      return (phases, decl)
 
 /-- Block until every kernel check queued by earlier commands has finished -/
 meta def awaitPendingKernelChecks : CoreM Unit := do
@@ -135,10 +146,9 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
     awaitPendingKernelChecks
-    let (elapsed, decl) ← benchmark spec.declName spec.binders spec.goal spec.proof spec.levelNames
+    let (phases, decl) ← benchmark spec.declName spec.binders spec.goal spec.proof spec.levelNames
     if spec.addDecl? then
       withOptions (debug.skipKernelTC.set · true) <| addDecl decl
-    logInfo m!"{label}: {fmtFloat (elapsed.heartbeats.toFloat / 1000) 1} kHB, \
-      {fmtFloat (elapsed.nanos.toFloat / 1_000_000)} ms"
+    logInfo m!"{label}:\n{phases.render}"
 
 end MetaBench
