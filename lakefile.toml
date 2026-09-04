@@ -1,6 +1,6 @@
 name = "metabench"
 version = "0.1.0"
-defaultTargets = ["MetaBench"]
+defaultTargets = ["MetaBench", "Tests"]
 
 [leanOptions]
 autoImplicit = false
@@ -8,3 +8,7 @@ pp.fieldNotation = false
 
 [[lean_lib]]
 name = "MetaBench"
+
+[[lean_lib]]
+name = "Tests"
+globs = ["Tests.+"]
