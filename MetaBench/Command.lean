@@ -116,7 +116,8 @@ meta def parseDecl (decl : TSyntax ``Parser.Command.declaration) : CommandElabM 
   let proof ← match val with
     | `(Parser.Command.declValSimple| := $body) => pure body.raw
     | _ => throwErrorAt val "#benchmark: the proof must be a plain `:= proof`"
-  let (addDecl?, declName, levelNames) ← match theoremId? with
+  let (addDecl?, declName, levelNames) ←
+    match theoremId? with
     | some id =>
       let r ← liftTermElabM <|
         Term.expandDeclId (← getCurrNamespace) (← getScope).levelNames id {}
