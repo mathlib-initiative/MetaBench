@@ -120,19 +120,26 @@ meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × Declaration) :=
 /-- How one iteration ended. `dnf` is data (a resource limit was hit); `fail` is breakage. -/
 inductive SampleResult where
   | ok (samples : PhaseSamples) (decl : Declaration)
+  | dnf (message : String)
   | fail (message : String)
 
+/-- One iteration under the ambient `maxHeartbeats`, restarted for each (Lean counts it per command). -/
 meta def runSample (spec : Spec) : TermElabM SampleResult :=
+  Core.withCurrHeartbeats <|
   tryCatchRuntimeEx
     (do
       let (samples, decl) ← samplePhases spec
       return .ok samples decl)
     fun e => do
       let message ← e.toMessageData.toString
-      return .fail message
+      -- TODO: Make kernel timeout detection more robust
+      let kernelTimeout := message.startsWith "(kernel) deterministic timeout"
+      return if e.isRuntime || kernelTimeout then .dnf message else .fail message
 
 inductive BenchResult where
   | ok (iterations : Array PhaseSamples) (decl : Declaration)
+  -- benchmark did not finish
+  | dnf (message : String)
   | fail (message : String)
 
 meta def runBenchmark (spec : Spec) : TermElabM BenchResult := do
@@ -145,6 +152,7 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchResult := do
   let info ← getInfoState
   let decl ← match ← runSample spec with
     | .ok _ d => pure d
+    | .dnf message => return .dnf message
     | .fail message => return .fail message
   modifyThe Core.State fun s => {s with messages}
   setInfoState info
@@ -154,6 +162,7 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchResult := do
     match ← withoutModifyingState (runSample spec) with
     | .ok ps _ =>
       samples := samples.push ps
+    | .dnf message => return .dnf message
     | .fail message => return .fail message
   return .ok samples decl
 
@@ -194,6 +203,7 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
       if spec.addDecl? then
         withOptions (debug.skipKernelTC.set · true) <| addDecl decl
       logInfo m!"{label}:\n{renderIterations iterations}"
+    | .dnf message => logInfo m!"{label}: dnf: {(message.splitOn "\n").headD message}"
     | .fail message => logError message
 
 end MetaBench

@@ -51,3 +51,26 @@ end Nested
 /-- error: benchmark proof contains sorry -/
 #guard_msgs in
 #benchmark in theorem bar : True := by sorry
+
+-- `maxHeartbeats` counts from the start of a command; `#benchmark` restarts it per iteration
+/--
+error: (deterministic) timeout at `isDefEq`, maximum number of heartbeats (100) has been reached
+
+Note: Use `set_option maxHeartbeats <num>` to set the limit.
+
+Hint: Additional diagnostic information may be available using the `set_option diagnostics true` command.
+-/
+#guard_msgs in
+set_option maxHeartbeats 100 in
+run_cmd do
+  for _ in [0:6] do
+    Lean.Elab.Command.elabCommand (← `(example : (2 : Nat) ^ 10 = 1024 := by decide))
+
+#guard_msgs (drop info) in
+set_option maxHeartbeats 100 in
+#benchmark in example : (2 : Nat) ^ 10 = 1024 := by decide
+
+/-- info: depth: dnf: maximum recursion depth has been reached -/
+#guard_msgs in
+set_option maxRecDepth 40 in
+#benchmark "depth" in example : (List.range 120).all (fun i => i * i % 7 < 7) = true := by decide
