@@ -64,11 +64,28 @@ public def fmtFloat (x : Float) (precision : Nat := 2) : String :=
     let fps := String.ofList ((toString fp).toList.leftpad precision '0')
     (if neg then "-" else "") ++ toString ip ++ (if precision == 0 then "" else "." ++ fps)
 
-def PhaseSamples.render (ps : PhaseSamples) : String :=
-  let row (name : String) (s : Sample) :=
-    #[name, fmtFloat (s.heartbeats.toFloat / 1000.0), "kHB",
-      fmtFloat (s.nanos.toFloat / 1_000_000), "ms"]
-  let rows := Phase.all.map (fun p => row (p.name) (ps p)) |>.push (row "total" ps.total)
+structure Summary where
+  min : Nat
+  median : Nat
+  max : Nat
+
+def summarize (xs : Array Nat) : Summary :=
+  let sorted := xs.qsort (· < ·)
+  { min := sorted[0]?.getD 0, median := sorted[sorted.size / 2]?.getD 0, max := sorted.back?.getD 0 }
+
+def Summary.cells (s : Summary) (iterations : Nat) (scale : Float) : Array String :=
+  let fmt (x : Nat) := fmtFloat (x.toFloat / scale)
+  #[fmt s.median] ++ if iterations > 1 then #[fmt s.min ++ "…" ++ fmt s.max] else #[]
+
+def renderIterations (iters : Array PhaseSamples) : String :=
+  let n := iters.size
+  let heading (unit : String) : Array String := #[unit] ++ if n > 1 then #["min…max"] else #[]
+  let header := #["phase"] ++ heading "kHB" ++ heading "ms"
+  let row (name : String) (samples : Array Sample) : Array String :=
+    #[name] ++ (summarize (samples.map (·.heartbeats))).cells n 1000.0
+            ++ (summarize (samples.map (·.nanos))).cells n 1_000_000
+  let rows := #[header] ++ Phase.all.map (fun p => row p.name (iters.map (· p)))
+    |>.push (row "total" (iters.map (·.total)))
   Elab.WF.GuessLex.formatTable rows
 
 end

@@ -13,16 +13,16 @@ three phases.
 ```
 /--
 info: example:
-goal   27.29 kHB 1.30 ms
-proof   3.72 kHB 0.58 ms
-kernel  0.93 kHB 0.16 ms
-total  31.94 kHB 2.04 ms
+phase    kHB     min…max   ms   min…max
+goal   25.49 25.42…25.51 0.83 0.82…0.88
+proof   1.07   1.07…1.09 0.05 0.05…0.06
+kernel  0.88   0.88…0.88 0.10 0.07…0.14
+total  27.46 27.38…27.46 0.98 0.94…1.05
 -/
 #guard_msgs in
 #benchmark in
 example : (2 : Nat) ^ 10 = 1024 := by decide
 ```
-
 -/
 
 open Lean Elab Command Term Meta
@@ -33,6 +33,11 @@ namespace MetaBench
 theorem, passes it to the kernel for checking, and logs the result. -/
 syntax (name := benchmarkCmd)
   "#benchmark" (ppSpace str)? " in" ppLine Lean.Parser.Command.declaration : command
+
+meta register_option bench.iters : Nat := {
+  defValue := 5
+  descr := "#benchmark: number of iterations per benchmark"
+}
 
 meta def elabGoal (stx : Syntax) : TermElabM Expr := do
   let goal ← Term.elabType stx
@@ -112,6 +117,46 @@ meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × Declaration) :=
         | .kernel => s3.sub s2
       return (phases, decl)
 
+/-- How one iteration ended. `dnf` is data (a resource limit was hit); `fail` is breakage. -/
+inductive SampleResult where
+  | ok (samples : PhaseSamples) (decl : Declaration)
+  | fail (message : String)
+
+meta def runSample (spec : Spec) : TermElabM SampleResult :=
+  tryCatchRuntimeEx
+    (do
+      let (samples, decl) ← samplePhases spec
+      return .ok samples decl)
+    fun e => do
+      let message ← e.toMessageData.toString
+      return .fail message
+
+inductive BenchResult where
+  | ok (iterations : Array PhaseSamples) (decl : Declaration)
+  | fail (message : String)
+
+meta def runBenchmark (spec : Spec) : TermElabM BenchResult := do
+  let opts ← getOptions
+  let iters := bench.iters.get opts
+  awaitPendingKernelChecks
+
+  -- warmup
+  let messages := (← getThe Core.State).messages
+  let info ← getInfoState
+  let decl ← match ← runSample spec with
+    | .ok _ d => pure d
+    | .fail message => return .fail message
+  modifyThe Core.State fun s => {s with messages}
+  setInfoState info
+
+  let mut samples : Array PhaseSamples := #[]
+  for _ in [0:iters] do
+    match ← withoutModifyingState (runSample spec) with
+    | .ok ps _ =>
+      samples := samples.push ps
+    | .fail message => return .fail message
+  return .ok samples decl
+
 meta def parseDecl (decl : TSyntax ``Parser.Command.declaration) : CommandElabM Spec := do
   let (theoremId?, binders, goal?, val) ← match decl with
     | `($_:declModifiers theorem $id:declId $sig:declSig $val:declVal) =>
@@ -144,10 +189,11 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   let label := (label?.map (·.getString)).getD spec.label
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
-    awaitPendingKernelChecks
-    let (phases, decl) ← samplePhases spec
-    if spec.addDecl? then
-      withOptions (debug.skipKernelTC.set · true) <| addDecl decl
-    logInfo m!"{label}:\n{phases.render}"
+    match ← runBenchmark spec with
+    | .ok iterations decl =>
+      if spec.addDecl? then
+        withOptions (debug.skipKernelTC.set · true) <| addDecl decl
+      logInfo m!"{label}:\n{renderIterations iterations}"
+    | .fail message => logError message
 
 end MetaBench
