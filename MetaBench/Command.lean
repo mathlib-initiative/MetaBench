@@ -94,8 +94,8 @@ meta def Spec.label (spec : Spec) : String :=
     then (privateToUserName spec.declName).toString
     else "example"
 
-/-- Benchmark a single theorem. Returns the elapsed `Sample` and the checked theorem. -/
-meta def benchmark (spec : Spec) : TermElabM (PhaseSamples × Declaration) :=
+/-- Sample all phases of a single theorem. Returns the `PhaseSamples` and the checked theorem. -/
+meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × Declaration) :=
   Term.withoutErrToSorry <| Term.withDeclName spec.declName <| Term.withLevelNames spec.levelNames do
     let s0 ← Sample.now
     Term.elabBinders spec.binders fun fvars => do
@@ -145,7 +145,7 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
     awaitPendingKernelChecks
-    let (phases, decl) ← benchmark spec
+    let (phases, decl) ← samplePhases spec
     if spec.addDecl? then
       withOptions (debug.skipKernelTC.set · true) <| addDecl decl
     logInfo m!"{label}:\n{phases.render}"
