@@ -76,25 +76,6 @@ meta def kernelCheck (decl : Declaration) : TermElabM Unit := do
   | .ok _ => pure ()
   | .error ex => throwKernelException ex
 
-/-- Benchmark a single theorem. Returns the elapsed `Sample` and the checked theorem. -/
-meta def benchmark (declName : Name) (binders : Array Syntax) (goalStx proofStx : Syntax)
-  (levelNames : List Name := []) : TermElabM (PhaseSamples × Declaration) :=
-  Term.withoutErrToSorry <| Term.withDeclName declName <| Term.withLevelNames levelNames do
-    let s0 ← Sample.now
-    Term.elabBinders binders fun fvars => do
-      let goal ← elabGoal goalStx
-      let s1 ← Sample.now
-      let proof ← elabProof proofStx goal
-      let decl ← mkTheorem declName fvars goal proof
-      let s2 ← Sample.now
-      kernelCheck decl
-      let s3 ← Sample.now
-      let phases := fun
-        | .goal => s1.sub s0
-        | .proof => s2.sub s1
-        | .kernel => s3.sub s2
-      return (phases, decl)
-
 /-- Block until every kernel check queued by earlier commands has finished -/
 meta def awaitPendingKernelChecks : CoreM Unit := do
   let env ← getEnv
@@ -112,6 +93,24 @@ meta def Spec.label (spec : Spec) : String :=
   if spec.addDecl?
     then (privateToUserName spec.declName).toString
     else "example"
+
+/-- Benchmark a single theorem. Returns the elapsed `Sample` and the checked theorem. -/
+meta def benchmark (spec : Spec) : TermElabM (PhaseSamples × Declaration) :=
+  Term.withoutErrToSorry <| Term.withDeclName spec.declName <| Term.withLevelNames spec.levelNames do
+    let s0 ← Sample.now
+    Term.elabBinders spec.binders fun fvars => do
+      let goal ← elabGoal spec.goal
+      let s1 ← Sample.now
+      let proof ← elabProof spec.proof goal
+      let decl ← mkTheorem spec.declName fvars goal proof
+      let s2 ← Sample.now
+      kernelCheck decl
+      let s3 ← Sample.now
+      let phases := fun
+        | .goal => s1.sub s0
+        | .proof => s2.sub s1
+        | .kernel => s3.sub s2
+      return (phases, decl)
 
 meta def parseDecl (decl : TSyntax ``Parser.Command.declaration) : CommandElabM Spec := do
   let (theoremId?, binders, goal?, val) ← match decl with
@@ -146,7 +145,7 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
     awaitPendingKernelChecks
-    let (phases, decl) ← benchmark spec.declName spec.binders spec.goal spec.proof spec.levelNames
+    let (phases, decl) ← benchmark spec
     if spec.addDecl? then
       withOptions (debug.skipKernelTC.set · true) <| addDecl decl
     logInfo m!"{label}:\n{phases.render}"
