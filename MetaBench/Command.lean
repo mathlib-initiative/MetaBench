@@ -59,7 +59,7 @@ meta def elabProof (stx : Syntax) (goal : Expr) : TermElabM Expr := do
 
 /-- Package `goal` and `proof` into a theorem. -/
 meta def mkTheorem (name : Name) (fvars : Array Expr) (goal proof : Expr) :
-    TermElabM Declaration := do
+    TermElabM TheoremVal := do
     if proof.hasSorry then
       throwError "benchmark proof contains sorry"
     let type ← Term.levelMVarToParam (← mkForallFVars fvars goal)
@@ -70,10 +70,11 @@ meta def mkTheorem (name : Name) (fvars : Array Expr) (goal proof : Expr) :
       throwError "benchmark uses section variables.\
         You must write the variable bindings on the benchmark instead"
     let levelParams := (collectLevelParams (collectLevelParams {} type) value).params.toList
-    return .thmDecl { name, levelParams, type, value }
+    return { name, levelParams, type, value }
 
-/-- Pass `decl` for kernel checking. -/
-meta def kernelCheck (decl : Declaration) : TermElabM Unit := do
+/-- Pass `thm` for kernel checking. -/
+meta def kernelCheck (thm : TheoremVal) : TermElabM Unit := do
+  let decl := Declaration.thmDecl thm
   let kenv := (← getEnv).toKernelEnv
   let opts ← getOptions
   -- Wrap `addDecl` in `IO.lazyPure` to force evaluation even though the result is unused.
@@ -100,26 +101,26 @@ meta def Spec.label (spec : Spec) : String :=
     else "example"
 
 /-- Sample all phases of a single theorem. Returns the `PhaseSamples` and the checked theorem. -/
-meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × Declaration) :=
+meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
   Term.withoutErrToSorry <| Term.withDeclName spec.declName <| Term.withLevelNames spec.levelNames do
     let s0 ← Sample.now
     Term.elabBinders spec.binders fun fvars => do
       let goal ← elabGoal spec.goal
       let s1 ← Sample.now
       let proof ← elabProof spec.proof goal
-      let decl ← mkTheorem spec.declName fvars goal proof
+      let thm ← mkTheorem spec.declName fvars goal proof
       let s2 ← Sample.now
-      kernelCheck decl
+      kernelCheck thm
       let s3 ← Sample.now
       let phases := fun
         | .goal => s1.sub s0
         | .proof => s2.sub s1
         | .kernel => s3.sub s2
-      return (phases, decl)
+      return (phases, thm)
 
 /-- How one iteration ended. `dnf` is data (a resource limit was hit); `fail` is breakage. -/
 inductive SampleResult where
-  | ok (samples : PhaseSamples) (decl : Declaration)
+  | ok (samples : PhaseSamples) (thm : TheoremVal)
   | dnf (message : String)
   | fail (message : String)
 
@@ -128,8 +129,8 @@ meta def runSample (spec : Spec) : TermElabM SampleResult :=
   Core.withCurrHeartbeats <|
   tryCatchRuntimeEx
     (do
-      let (samples, decl) ← samplePhases spec
-      return .ok samples decl)
+      let (samples, thm) ← samplePhases spec
+      return .ok samples thm)
     fun e => do
       let message ← e.toMessageData.toString
       -- TODO: Make kernel timeout detection more robust
@@ -137,7 +138,7 @@ meta def runSample (spec : Spec) : TermElabM SampleResult :=
       return if e.isRuntime || kernelTimeout then .dnf message else .fail message
 
 inductive BenchResult where
-  | ok (iterations : Array PhaseSamples) (decl : Declaration)
+  | ok (iterations : Array PhaseSamples) (thm : TheoremVal)
   -- benchmark did not finish
   | dnf (message : String)
   | fail (message : String)
@@ -150,7 +151,7 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchResult := do
   -- warmup
   let messages := (← getThe Core.State).messages
   let info ← getInfoState
-  let decl ← match ← runSample spec with
+  let thm ← match ← runSample spec with
     | .ok _ d => pure d
     | .dnf message => return .dnf message
     | .fail message => return .fail message
@@ -164,7 +165,7 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchResult := do
       samples := samples.push ps
     | .dnf message => return .dnf message
     | .fail message => return .fail message
-  return .ok samples decl
+  return .ok samples thm
 
 meta def parseDecl (decl : TSyntax ``Parser.Command.declaration) : CommandElabM Spec := do
   let (theoremId?, binders, goal?, val) ← match decl with
@@ -199,10 +200,11 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
     match ← runBenchmark spec with
-    | .ok iterations decl =>
+    | .ok iterations thm =>
       if spec.addDecl? then
-        withOptions (debug.skipKernelTC.set · true) <| addDecl decl
-      logInfo m!"{label}:\n{renderIterations iterations}"
+        withOptions (debug.skipKernelTC.set · true) <| addDecl (.thmDecl thm)
+      let nodes ← thm.value.numObjs
+      logInfo m!"{label}:\n{renderReport iterations nodes}"
     | .dnf message => logInfo m!"{label}: dnf: {(message.splitOn "\n").headD message}"
     | .fail message => logError message
 
