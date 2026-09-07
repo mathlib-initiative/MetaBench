@@ -77,7 +77,7 @@ def Summary.cells (s : Summary) (iterations : Nat) (scale : Float) : Array Strin
   let fmt (x : Nat) := fmtFloat (x.toFloat / scale)
   #[fmt s.median] ++ if iterations > 1 then #[fmt s.min ++ "…" ++ fmt s.max] else #[]
 
-def renderIterations (iters : Array PhaseSamples) : String :=
+def renderReport (iters : Array PhaseSamples) (proofNodes : Nat) : String :=
   let n := iters.size
   let heading (unit : String) : Array String := #[unit] ++ if n > 1 then #["min…max"] else #[]
   let header := #["phase"] ++ heading "kHB" ++ heading "ms"
@@ -86,7 +86,10 @@ def renderIterations (iters : Array PhaseSamples) : String :=
             ++ (summarize (samples.map (·.nanos))).cells n 1_000_000
   let rows := #[header] ++ Phase.all.map (fun p => row p.name (iters.map (· p)))
     |>.push (row "total" (iters.map (·.total)))
-  Elab.WF.GuessLex.formatTable rows
+  let kernelNs := (summarize (iters.map fun it => (it .kernel).nanos)).median
+  let perNode := if proofNodes == 0 then "" else
+    s!", kernel {fmtFloat (kernelNs.toFloat / proofNodes.toFloat) 0} ns/node"
+  Elab.WF.GuessLex.formatTable rows ++ s!"\nproof term: {proofNodes} nodes{perNode}"
 
 end
 
