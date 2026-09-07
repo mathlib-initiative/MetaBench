@@ -14,10 +14,11 @@ three phases.
 /--
 info: example:
 phase    kHB     min…max   ms   min…max
-goal   25.49 25.42…25.51 0.83 0.82…0.88
-proof   1.07   1.07…1.09 0.05 0.05…0.06
-kernel  0.88   0.88…0.88 0.10 0.07…0.14
-total  27.46 27.38…27.46 0.98 0.94…1.05
+goal   25.49 25.42…25.51 0.62 0.55…0.68
+proof   1.07   1.07…1.09 0.04 0.04…0.05
+kernel  0.89   0.89…0.89 0.07 0.06…0.09
+total  27.46 27.38…27.46 0.74 0.65…0.80
+proof term: 62 nodes, kernel 1123 ns/node
 -/
 #guard_msgs in
 #benchmark in
