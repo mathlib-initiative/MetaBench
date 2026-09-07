@@ -14,11 +14,11 @@ three phases.
 /--
 info: example:
 phase    kHB     min…max   ms   min…max
-goal   25.49 25.42…25.51 0.62 0.55…0.68
-proof   1.07   1.07…1.09 0.04 0.04…0.05
-kernel  0.89   0.89…0.89 0.07 0.06…0.09
-total  27.46 27.38…27.46 0.74 0.65…0.80
-proof term: 62 nodes, kernel 1123 ns/node
+goal   25.55 25.48…25.57 0.52 0.51…0.63
+proof   1.07   1.07…1.09 0.03 0.03…0.05
+kernel  0.89   0.89…0.89 0.05 0.05…0.07
+total  27.52 27.44…27.52 0.60 0.59…0.74
+proof term: 56 nodes, kernel 916 ns/node
 -/
 #guard_msgs in
 #benchmark in
@@ -204,7 +204,8 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
     | .ok iterations thm =>
       if spec.addDecl? then
         withOptions (debug.skipKernelTC.set · true) <| addDecl (.thmDecl thm)
-      let nodes ← thm.value.numObjs
+      -- The number of distinct subterms nodes in the proof.
+      let nodes ← (ShareCommon.shareCommon thm.value).numObjs
       logInfo m!"{label}:\n{renderReport iterations nodes}"
     | .dnf message => logInfo m!"{label}: dnf: {(message.splitOn "\n").headD message}"
     | .fail message => logError message

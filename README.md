@@ -20,11 +20,11 @@ The following is shown in the infoview.
 /--
 info: foo:
 phase    kHB     min…max   ms   min…max
-goal    9.42  9.40…13.53 0.25 0.21…0.39
-proof  14.54 14.53…16.01 0.41 0.37…0.56
-kernel  0.57   0.56…0.57 0.04 0.04…0.07
-total  24.53 24.50…30.09 0.70 0.62…1.00
-proof term: 58 nodes, kernel 766 ns/node
+goal    9.25  9.24…13.36 0.20 0.20…0.37
+proof  14.54 14.52…16.01 0.36 0.32…0.46
+kernel  0.57   0.55…0.57 0.04 0.03…0.05
+total  24.36 24.33…29.92 0.59 0.54…0.87
+proof term: 53 nodes, kernel 827 ns/node
 -/
 ```
 
