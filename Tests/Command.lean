@@ -70,7 +70,11 @@ run_cmd do
 set_option maxHeartbeats 100 in
 #benchmark in example : (2 : Nat) ^ 10 = 1024 := by decide
 
-/-- info: depth: dnf: maximum recursion depth has been reached -/
+/--
+error: maximum recursion depth has been reached
+use `set_option maxRecDepth <num>` to increase limit
+use `set_option diagnostics true` to get diagnostic information
+-/
 #guard_msgs in
 set_option maxRecDepth 40 in
 #benchmark "depth" in example : (List.range 120).all (fun i => i * i % 7 < 7) = true := by decide
