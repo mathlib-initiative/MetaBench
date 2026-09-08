@@ -42,3 +42,16 @@ Use [`example/`](example/) as a template and copy it to a new directory outside 
 When using the `bench-run.sh` script, the `METABENCH` environment variable should point to a
 checkout of this repo.
 
+## JSONL output
+
+Set the `bench.out` option to append JSON serialized benchmark run data to a file at a given path.
+
+For example:
+
+```
+METABENCH=. example/bench-run.sh <mathlib-checkout> example/Suites/Det.lean -Dbench.out=results.jsonl
+```
+
+The output of each benchmark run is a single JSON object containing the label, the Lean version, the
+proof-term node count, and every iteration's raw samples per phase. Each JSON object is appended to
+a single line.
