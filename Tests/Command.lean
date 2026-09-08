@@ -70,7 +70,27 @@ run_cmd do
 set_option maxHeartbeats 100 in
 #benchmark in example : (2 : Nat) ^ 10 = 1024 := by decide
 
-/-- info: depth: dnf: maximum recursion depth has been reached -/
+/--
+error: maximum recursion depth has been reached
+use `set_option maxRecDepth <num>` to increase limit
+use `set_option diagnostics true` to get diagnostic information
+-/
 #guard_msgs in
 set_option maxRecDepth 40 in
 #benchmark "depth" in example : (List.range 120).all (fun i => i * i % 7 < 7) = true := by decide
+
+-- `bench.out` appends one JSON line per benchmark
+run_cmd do try IO.FS.removeFile ".lake/bench-test.jsonl" catch _ => pure ()
+
+set_option bench.out ".lake/bench-test.jsonl" in
+#guard_msgs (drop info) in
+#benchmark "jsonl" in example : 1 + 1 = 2 := rfl
+
+/-- info: jsonl 5 -/
+#guard_msgs in
+run_cmd do
+  let #[line] ← IO.FS.lines ".lake/bench-test.jsonl" | throwError "expected one line"
+  let json ← IO.ofExcept (Lean.Json.parse line)
+  let label ← IO.ofExcept (json.getObjValAs? String "label")
+  let kernel ← IO.ofExcept (json.getObjValAs? (Array Lean.Json) "kernel")
+  Lean.logInfo m!"{label} {kernel.size}"

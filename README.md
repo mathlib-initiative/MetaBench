@@ -17,15 +17,12 @@ theorem foo (x y : Nat) (h : x < y) : x + 1 <= y := by omega
 The following is shown in the infoview.
 
 ```
-/--
-info: foo:
 phase    kHB     min…max   ms   min…max
 goal    9.25  9.24…13.36 0.20 0.20…0.37
 proof  14.54 14.52…16.01 0.36 0.32…0.46
 kernel  0.57   0.55…0.57 0.04 0.03…0.05
 total  24.36 24.33…29.92 0.59 0.54…0.87
 proof term: 53 nodes, kernel 827 ns/node
--/
 ```
 
 ## Example Suites
@@ -45,3 +42,16 @@ Use [`example/`](example/) as a template and copy it to a new directory outside 
 When using the `bench-run.sh` script, the `METABENCH` environment variable should point to a
 checkout of this repo.
 
+## JSONL output
+
+Set the `bench.out` option to append JSON serialized benchmark run data to a file at a given path.
+
+For example:
+
+```
+METABENCH=. example/bench-run.sh <mathlib-checkout> example/Suites/Det.lean -Dbench.out=results.jsonl
+```
+
+The output of each benchmark run is a single JSON object containing the label, the Lean version, the
+proof-term node count, and every iteration's raw samples per phase. Each JSON object is appended to
+a single line.

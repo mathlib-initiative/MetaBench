@@ -1,6 +1,7 @@
 module
 
 public import Std.Time.Duration
+public import Lean.Data.Json
 import Lean
 
 open Lean Elab Std.Time
@@ -14,6 +15,7 @@ moment. -/
 structure Sample where
   nanos : Nat
   heartbeats : Nat
+  deriving ToJson
 
 @[inline] def Sample.now : BaseIO Sample := do
   return { nanos := ← IO.monoNanosNow, heartbeats := ← IO.getNumHeartbeats }
@@ -90,6 +92,11 @@ def renderReport (iters : Array PhaseSamples) (proofNodes : Nat) : String :=
   let perNode := if proofNodes == 0 then "" else
     s!", kernel {fmtFloat (kernelNs.toFloat / proofNodes.toFloat) 0} ns/node"
   Elab.WF.GuessLex.formatTable rows ++ s!"\nproof term: {proofNodes} nodes{perNode}"
+
+def jsonReport (label : String) (iters : Array PhaseSamples) (proofNodes : Nat) : Json :=
+  Json.mkObj <|
+    [("label", toJson label), ("lean", toJson Lean.versionString), ("nodes", toJson proofNodes)] ++
+    Phase.all.toList.map fun p => (p.name, toJson (iters.map (· p)))
 
 end
 

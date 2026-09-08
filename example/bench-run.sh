@@ -8,7 +8,6 @@ bench="$(cd "${METABENCH:?set METABENCH to the harness checkout}" && pwd)"
 mathlib="${1:?usage: METABENCH=<harness> bench-run.sh <mathlib-dir> <suite.lean> [lean args]}"
 suite="${2:?usage: METABENCH=<harness> bench-run.sh <mathlib-dir> <suite.lean> [lean args]}"
 shift 2
-suite="$(cd "$(dirname "$suite")" && pwd)/$(basename "$suite")"
 
 if [ ! -f "$bench/lakefile.toml" ]; then
   echo "error: METABENCH=$bench is not the benchmark library checkout" >&2; exit 2
@@ -21,6 +20,6 @@ if ! diff -q "$bench/lean-toolchain" "$mathlib/lean-toolchain" >/dev/null; then
   exit 2
 fi
 (cd "$bench" && lake build MetaBench >/dev/null)
-cd "$mathlib"
-exec lake env sh -c 'LEAN_PATH="$LEAN_PATH:$0" exec lean -DElab.async=false "$@"' \
+exec lake +"$(cat "$mathlib/lean-toolchain")" --dir "$mathlib" env \
+  sh -c 'LEAN_PATH="$LEAN_PATH:$0" exec lean -DElab.async=false "$@"' \
   "$bench/.lake/build/lib/lean" "$suite" "$@"
