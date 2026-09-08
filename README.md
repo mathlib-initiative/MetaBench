@@ -17,15 +17,12 @@ theorem foo (x y : Nat) (h : x < y) : x + 1 <= y := by omega
 The following is shown in the infoview.
 
 ```
-/--
-info: foo:
 phase    kHB     min…max   ms   min…max
 goal    9.25  9.24…13.36 0.20 0.20…0.37
 proof  14.54 14.52…16.01 0.36 0.32…0.46
 kernel  0.57   0.55…0.57 0.04 0.03…0.05
 total  24.36 24.33…29.92 0.59 0.54…0.87
 proof term: 53 nodes, kernel 827 ns/node
--/
 ```
 
 ## Example Suites
