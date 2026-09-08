@@ -24,6 +24,10 @@ proof term: 56 nodes, kernel 916 ns/node
 #benchmark in
 example : (2 : Nat) ^ 10 = 1024 := by decide
 ```
+
+When `bench.out` is set to a file path each benchmark run also appends a JSON object to the file
+containing the label, the Lean version, the proof-term node count, and every iteration's raw samples
+per phase.
 -/
 
 open Lean Elab Command Term Meta
@@ -39,6 +43,16 @@ meta register_option bench.iters : Nat := {
   defValue := 5
   descr := "#benchmark: number of iterations per benchmark"
 }
+
+meta register_option bench.out : String := {
+  defValue := ""
+  descr := "#benchmark: if set, append the benchmark output to a file at this path"
+}
+
+meta def emitJson (json : Json) : CoreM Unit := do
+  let path := bench.out.get (← getOptions)
+  unless path.isEmpty do
+    IO.FS.withFile path .append fun h => h.putStrLn json.compress
 
 meta def elabGoal (stx : Syntax) : TermElabM Expr := do
   let goal ← Term.elabType stx
@@ -207,7 +221,8 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
       -- The number of distinct subterms nodes in the proof.
       let nodes ← (ShareCommon.shareCommon thm.value).numObjs
       logInfo m!"{label}:\n{renderReport iterations nodes}"
-    | .dnf message => logInfo m!"{label}: dnf: {(message.splitOn "\n").headD message}"
+      emitJson (jsonReport label iterations nodes)
+    | .dnf message => logError message
     | .fail message => logError message
 
 end MetaBench
