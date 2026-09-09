@@ -44,14 +44,27 @@ checkout of this repo.
 
 ## JSONL output
 
-Set the `bench.out` option to append JSON serialized benchmark run data to a file at a given path.
-
-For example:
+Set the `bench.out` option to append one JSON object per benchmark to a file, one object per line.
+The `bench.tag` option records a free-form tag with each object, such as the git revision under test.
 
 ```
-METABENCH=. example/bench-run.sh <mathlib-checkout> example/Suites/Det.lean -Dbench.out=results.jsonl
+METABENCH=. example/bench-run.sh <mathlib-checkout> example/Suites/Det.lean -Dbench.out=results.jsonl -Dbench.tag=$(git -C <mathlib-checkout> rev-parse --short HEAD)
 ```
 
-The output of each benchmark run is a single JSON object containing the label, the Lean version, the
-proof-term node count, and every iteration's raw samples per phase. Each JSON object is appended to
-a single line.
+Each object has the fields:
+
+- `label`: the benchmark's name.
+- `run`: the start time of the process in UTC, shared by every benchmark of one run, so runs appended
+  to the same file can be told apart.
+- `tag`: the `bench.tag` option.
+- `lean`: the Lean version.
+- `file`, `line`: the location of the `#benchmark` command.
+- `options`: the options in force, as an object.
+- `proofNodes`, `typeNodes`: the number of distinct subterms of the proof and of the statement.
+- `constants`: the number of distinct subterms of the proof headed by each constant.
+- `warmup`: the samples of the warmup, per phase.
+- `iters`: the samples of every measured iteration, per phase.
+
+A sample is `{"heartbeats": n, "nanos": n}` and the phases are `goal`, `proof` and `kernel`. The
+file loads into pandas with `pd.read_json(path, lines=True)`. On the Lean side the same record is
+`MetaBench.Report`, with `ToJson` and `FromJson` instances.

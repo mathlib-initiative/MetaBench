@@ -86,11 +86,10 @@ set_option bench.out ".lake/bench-test.jsonl" in
 #guard_msgs (drop info) in
 #benchmark "jsonl" in example : 1 + 1 = 2 := rfl
 
-/-- info: jsonl 5 -/
+/-- info: jsonl 5 true -/
 #guard_msgs in
 run_cmd do
   let #[line] ← IO.FS.lines ".lake/bench-test.jsonl" | throwError "expected one line"
   let json ← IO.ofExcept (Lean.Json.parse line)
-  let label ← IO.ofExcept (json.getObjValAs? String "label")
-  let kernel ← IO.ofExcept (json.getObjValAs? (Array Lean.Json) "kernel")
-  Lean.logInfo m!"{label} {kernel.size}"
+  let report : MetaBench.Report ← IO.ofExcept (Lean.fromJson? json)
+  Lean.logInfo m!"{report.label} {report.iters.size} {(Lean.toJson report).compress == json.compress}"
