@@ -133,54 +133,26 @@ meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
         | .kernel => s3.sub s2
       return (phases, thm)
 
-/-- How one iteration ended. `dnf` is data (a resource limit was hit); `fail` is breakage. -/
-inductive SampleResult where
-  | ok (samples : PhaseSamples) (thm : TheoremVal)
-  | dnf (message : String)
-  | fail (message : String)
+/-- One iteration under the ambient `maxHeartbeats`. -/
+meta def runSample (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
+  Core.withCurrHeartbeats (samplePhases spec)
 
-/-- One iteration under the ambient `maxHeartbeats`, restarted for each (Lean counts it per command). -/
-meta def runSample (spec : Spec) : TermElabM SampleResult :=
-  Core.withCurrHeartbeats <|
-  tryCatchRuntimeEx
-    (do
-      let (samples, thm) ← samplePhases spec
-      return .ok samples thm)
-    fun e => do
-      let message ← e.toMessageData.toString
-      -- TODO: Make kernel timeout detection more robust
-      let kernelTimeout := message.startsWith "(kernel) deterministic timeout"
-      return if e.isRuntime || kernelTimeout then .dnf message else .fail message
-
-inductive BenchResult where
-  | ok (iterations : Array PhaseSamples) (thm : TheoremVal)
-  -- benchmark did not finish
-  | dnf (message : String)
-  | fail (message : String)
-
-meta def runBenchmark (spec : Spec) : TermElabM BenchResult := do
-  let opts ← getOptions
-  let iters := bench.iters.get opts
+meta def runBenchmark (spec : Spec) : TermElabM (Array PhaseSamples × TheoremVal) := do
+  let iters := bench.iters.get (← getOptions)
   awaitPendingKernelChecks
 
-  -- warmup
+  -- warmup: commit the caches, discard its messages and info
   let messages := (← getThe Core.State).messages
   let info ← getInfoState
-  let thm ← match ← runSample spec with
-    | .ok _ d => pure d
-    | .dnf message => return .dnf message
-    | .fail message => return .fail message
-  modifyThe Core.State fun s => {s with messages}
+  let (_, thm) ← runSample spec
+  modifyThe Core.State fun s => { s with messages }
   setInfoState info
 
   let mut samples : Array PhaseSamples := #[]
   for _ in [0:iters] do
-    match ← withoutModifyingState (runSample spec) with
-    | .ok ps _ =>
-      samples := samples.push ps
-    | .dnf message => return .dnf message
-    | .fail message => return .fail message
-  return .ok samples thm
+    let (ps, _) ← withoutModifyingState (runSample spec)
+    samples := samples.push ps
+  return (samples, thm)
 
 meta def parseDecl (decl : TSyntax ``Parser.Command.declaration) : CommandElabM Spec := do
   let (theoremId?, binders, goal?, val) ← match decl with
@@ -214,15 +186,12 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   let label := (label?.map (·.getString)).getD spec.label
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
-    match ← runBenchmark spec with
-    | .ok iterations thm =>
-      if spec.addDecl? then
-        withOptions (debug.skipKernelTC.set · true) <| addDecl (.thmDecl thm)
-      -- The number of distinct subterms nodes in the proof.
-      let nodes ← (ShareCommon.shareCommon thm.value).numObjs
-      logInfo m!"{label}:\n{renderReport iterations nodes}"
-      emitJson (jsonReport label iterations nodes)
-    | .dnf message => logError message
-    | .fail message => logError message
+    let (iterations, thm) ← runBenchmark spec
+    if spec.addDecl? then
+      withOptions (debug.skipKernelTC.set · true) <| addDecl (.thmDecl thm)
+    -- The number of distinct subterms nodes in the proof.
+    let nodes ← (ShareCommon.shareCommon thm.value).numObjs
+    logInfo m!"{label}:\n{renderReport iterations nodes}"
+    emitJson (jsonReport label iterations nodes)
 
 end MetaBench
