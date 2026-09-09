@@ -15,7 +15,7 @@ moment. -/
 structure Sample where
   nanos : Nat
   heartbeats : Nat
-  deriving ToJson
+  deriving ToJson, FromJson
 
 @[inline] def Sample.now : BaseIO Sample := do
   return { nanos := ← IO.monoNanosNow, heartbeats := ← IO.getNumHeartbeats }
@@ -79,7 +79,43 @@ def Summary.cells (s : Summary) (iterations : Nat) (scale : Float) : Array Strin
   let fmt (x : Nat) := fmtFloat (x.toFloat / scale)
   #[fmt s.median] ++ if iterations > 1 then #[fmt s.min ++ "…" ++ fmt s.max] else #[]
 
-def renderReport (iters : Array PhaseSamples) (proofNodes : Nat) : String :=
+instance : ToJson PhaseSamples where
+  toJson ps := Json.mkObj (Phase.all.toList.map fun p => (p.name, toJson (ps p)))
+
+instance : FromJson PhaseSamples where
+  fromJson? json := do
+    let goal ← json.getObjValAs? Sample "goal"
+    let proof ← json.getObjValAs? Sample "proof"
+    let kernel ← json.getObjValAs? Sample "kernel"
+    return fun | .goal => goal | .proof => proof | .kernel => kernel
+
+/-- One benchmark's results file format. -/
+structure Report where
+  label : String
+  /-- The start time of the process, shared by every benchmark of one run. -/
+  run : String
+  /-- The `bench.tag` option, e.g. a git revision passed as `-Dbench.tag=…`. -/
+  tag : String
+  lean : String := Lean.versionString
+  /-- The source file and line of the `#benchmark` command. -/
+  file : String
+  line : Nat
+  /-- The options in force, as a JSON object. -/
+  options : Json
+  /-- The number of distinct subterms of the proof and of the statement. -/
+  proofNodes : Nat
+  typeNodes : Nat
+  /-- The number of distinct subterms of the proof headed by each constant. -/
+  constants : Std.TreeMap String Nat
+  /-- The samples of the warmup. -/
+  warmup : PhaseSamples
+  /-- The samples of every measured iteration. -/
+  iters : Array PhaseSamples
+  deriving ToJson, FromJson
+
+def renderReport (r : Report) : String :=
+  let iters := r.iters
+  let proofNodes := r.proofNodes
   let n := iters.size
   let heading (unit : String) : Array String := #[unit] ++ if n > 1 then #["min…max"] else #[]
   let header := #["phase"] ++ heading "kHB" ++ heading "ms"
@@ -92,11 +128,6 @@ def renderReport (iters : Array PhaseSamples) (proofNodes : Nat) : String :=
   let perNode := if proofNodes == 0 then "" else
     s!", kernel {fmtFloat (kernelNs.toFloat / proofNodes.toFloat) 0} ns/node"
   Elab.WF.GuessLex.formatTable rows ++ s!"\nproof term: {proofNodes} nodes{perNode}"
-
-def jsonReport (label : String) (iters : Array PhaseSamples) (proofNodes : Nat) : Json :=
-  Json.mkObj <|
-    [("label", toJson label), ("lean", toJson Lean.versionString), ("nodes", toJson proofNodes)] ++
-    Phase.all.toList.map fun p => (p.name, toJson (iters.map (· p)))
 
 end
 

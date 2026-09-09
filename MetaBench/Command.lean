@@ -2,6 +2,7 @@ module
 
 public meta import Lean
 public meta import MetaBench.Core
+meta import Std.Time
 
 /-!
 # The `#benchmark` command.
@@ -25,9 +26,10 @@ proof term: 56 nodes, kernel 916 ns/node
 example : (2 : Nat) ^ 10 = 1024 := by decide
 ```
 
-When `bench.out` is set to a file path each benchmark run also appends a JSON object to the file
-containing the label, the Lean version, the proof-term node count, and every iteration's raw samples
-per phase.
+When `bench.out` is set to a file path each benchmark run also appends a JSON object to the file:
+the label, the run's start time, the `bench.tag` option, the Lean version, the source file and line,
+the options in force, the node counts of the proof and the statement, the proof's constants, and the
+raw samples of the warmup and of every iteration.
 -/
 
 open Lean Elab Command Term Meta
@@ -48,6 +50,50 @@ meta register_option bench.out : String := {
   defValue := ""
   descr := "#benchmark: if set, append the benchmark output to a file at this path"
 }
+
+meta register_option bench.tag : String := {
+  defValue := ""
+  descr := "#benchmark: a tag recorded with the JSON output, e.g. a git revision"
+}
+
+/-- The start time of this process, so every benchmark of one run carries the same `run` stamp. -/
+meta initialize runStamp : String ←
+  return (Std.Time.DateTime.ofTimestamp (← Std.Time.Timestamp.now) .UTC).toISO8601String
+
+/-- The options in force, as a JSON object. -/
+meta def optionsJson (opts : Options) : Json := Id.run do
+  let mut fields := []
+  for (name, value) in opts do
+    fields := (name.toString, match value with
+      | .ofString v => toJson v
+      | .ofBool v => toJson v
+      | .ofName v => toJson v.toString
+      | .ofNat v => toJson v
+      | .ofInt v => toJson v
+      | .ofSyntax v => toJson v.prettyPrint.pretty) :: fields
+  return Json.mkObj fields
+
+/-- The number of distinct subterms of `e` headed by each constant: an application counts once under
+its head, a bare constant under itself, and every subterm at most once. -/
+meta partial def headConstants (e : Expr) : Std.TreeMap String Nat compare :=
+  ((go e).run ({}, {})).2.2
+where
+  go (e : Expr) : StateM (Std.HashSet Expr × Std.TreeMap String Nat compare) Unit := do
+    if (← get).1.contains e then return
+    modify fun (seen, counts) => (seen.insert e, counts)
+    let count (n : Name) : StateM (Std.HashSet Expr × Std.TreeMap String Nat compare) Unit :=
+      modify fun (seen, counts) => (seen, counts.insert n.toString (counts.getD n.toString 0 + 1))
+    match e with
+    | .app .. =>
+      match e.getAppFn with
+      | .const n _ => count n
+      | fn => go fn
+      e.getAppArgs.forM go
+    | .const n _ => count n
+    | .lam _ t b _ | .forallE _ t b _ => go t; go b
+    | .letE _ t v b _ => go t; go v; go b
+    | .mdata _ b | .proj _ _ b => go b
+    | _ => pure ()
 
 meta def emitJson (json : Json) : CoreM Unit := do
   let path := bench.out.get (← getOptions)
@@ -137,14 +183,14 @@ meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
 meta def runSample (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
   Core.withCurrHeartbeats (samplePhases spec)
 
-meta def runBenchmark (spec : Spec) : TermElabM (Array PhaseSamples × TheoremVal) := do
+meta def runBenchmark (spec : Spec) : TermElabM (TheoremVal × PhaseSamples × Array PhaseSamples) := do
   let iters := bench.iters.get (← getOptions)
   awaitPendingKernelChecks
 
   -- warmup: commit the caches, discard its messages and info
   let messages := (← getThe Core.State).messages
   let info ← getInfoState
-  let (_, thm) ← runSample spec
+  let (warmup, thm) ← runSample spec
   modifyThe Core.State fun s => { s with messages }
   setInfoState info
 
@@ -152,7 +198,7 @@ meta def runBenchmark (spec : Spec) : TermElabM (Array PhaseSamples × TheoremVa
   for _ in [0:iters] do
     let (ps, _) ← withoutModifyingState (runSample spec)
     samples := samples.push ps
-  return (samples, thm)
+  return (thm, warmup, samples)
 
 meta def parseDecl (decl : TSyntax ``Parser.Command.declaration) : CommandElabM Spec := do
   let (theoremId?, binders, goal?, val) ← match decl with
@@ -186,12 +232,20 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   let label := (label?.map (·.getString)).getD spec.label
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
-    let (iterations, thm) ← runBenchmark spec
+    let (thm, warmup, iterations) ← runBenchmark spec
     if spec.addDecl? then
       withOptions (debug.skipKernelTC.set · true) <| addDecl (.thmDecl thm)
-    -- The number of distinct subterms nodes in the proof.
-    let nodes ← (ShareCommon.shareCommon thm.value).numObjs
-    logInfo m!"{label}:\n{renderReport iterations nodes}"
-    emitJson (jsonReport label iterations nodes)
+    -- Share equal subterms first, so the counts are of distinct subterms.
+    let value := ShareCommon.shareCommon thm.value
+    let opts ← getOptions
+    let report : Report := {
+      label, run := runStamp, tag := bench.tag.get opts
+      file := ← getFileName, line := ((← getFileMap).toPosition (stx.getPos?.getD 0)).line
+      options := optionsJson opts
+      proofNodes := ← value.numObjs, typeNodes := ← (ShareCommon.shareCommon thm.type).numObjs
+      constants := headConstants value
+      warmup, iters := iterations }
+    logInfo m!"{label}:\n{renderReport report}"
+    emitJson (toJson report)
 
 end MetaBench
