@@ -25,6 +25,36 @@ total  24.36 24.33…29.92 0.59 0.54…0.87
 proof term: 53 nodes, kernel 827 ns/node
 ```
 
+With `set_option bench.proofHeads n` the report also lists the `n` most frequent head constants of the proof term.
+
+``` lean
+import MetaBench
+
+set_option bench.proofHeads 5 in
+#benchmark in
+theorem foo (a b c : Nat) (h₁ : a = b) (h₂ : b = c) : a + 0 = c := by
+  rw [Nat.add_zero, h₁, h₂]
+```
+
+The following output is show in the infoview:
+
+```
+foo:
+phase    kHB     min…max   ms   min…max
+goal   13.65 13.64…13.66 0.30 0.30…0.50
+proof   7.09   7.08…7.10 0.17 0.17…0.29
+kernel  0.92   0.92…0.92 0.06 0.05…0.08
+total  21.66 21.64…21.67 0.53 0.52…0.87
+proof term: 91 nodes, kernel 676 ns/node
+
+proof heads count
+Eq              9
+Eq.mpr          3
+congrArg        3
+id              3
+Eq.refl         1
+```
+
 ## Example Suites
 
 [`example/`](example/) contains benchmark suites for the `eval_det` and `eval_rank` tactics.
@@ -61,7 +91,7 @@ Each object has the fields:
 - `file`, `line`: the location of the `#benchmark` command.
 - `options`: the options in force, as an object.
 - `proofNodes`, `typeNodes`: the number of distinct subterms of the proof and of the statement.
-- `constants`: the number of distinct subterms of the proof headed by each constant.
+- `proofHeads`: the number of distinct subterms of the proof headed by each constant.
 - `warmup`: the samples of the warmup, per phase.
 - `iters`: the samples of every measured iteration, per phase.
 

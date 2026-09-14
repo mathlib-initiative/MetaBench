@@ -28,8 +28,11 @@ example : (2 : Nat) ^ 10 = 1024 := by decide
 
 When `bench.out` is set to a file path each benchmark run also appends a JSON object to the file:
 the label, the run's start time, the `bench.tag` option, the Lean version, the source file and line,
-the options in force, the node counts of the proof and the statement, the proof's constants, and the
+the options in force, the node counts of the proof and the statement, the proof's head constants, and the
 raw samples of the warmup and of every iteration.
+
+When `bench.proofHeads n` is set report also lists the `n` most frequent head
+constants of the proof term.
 -/
 
 open Lean Elab Command Term Meta
@@ -49,6 +52,11 @@ meta register_option bench.iters : Nat := {
 meta register_option bench.out : String := {
   defValue := ""
   descr := "#benchmark: if set, append the benchmark output to a file at this path"
+}
+
+meta register_option bench.proofHeads : Nat := {
+  defValue := 0
+  descr := "#benchmark: list the n most frequent head constants of the proof term (0: off)"
 }
 
 meta register_option bench.tag : String := {
@@ -243,9 +251,11 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
       file := ← getFileName, line := ((← getFileMap).toPosition (stx.getPos?.getD 0)).line
       options := optionsJson opts
       proofNodes := ← value.numObjs, typeNodes := ← (ShareCommon.shareCommon thm.type).numObjs
-      constants := headConstants value
+      proofHeads := headConstants value
       warmup, iters := iterations }
-    logInfo m!"{label}:\n{renderReport report}"
+    let proofHeads := bench.proofHeads.get opts
+    logInfo m!"{label}:\n{renderReport report}\
+      {if proofHeads == 0 then "" else "\n\n" ++ renderProofHeads report proofHeads}"
     emitJson (toJson report)
 
 end MetaBench
