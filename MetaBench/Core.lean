@@ -106,12 +106,17 @@ structure Report where
   proofNodes : Nat
   typeNodes : Nat
   /-- The number of distinct subterms of the proof headed by each constant. -/
-  constants : Std.TreeMap String Nat
+  proofHeads : Std.TreeMap String Nat
   /-- The samples of the warmup. -/
   warmup : PhaseSamples
   /-- The samples of every measured iteration. -/
   iters : Array PhaseSamples
   deriving ToJson, FromJson
+
+def renderProofHeads (r : Report) (n : Nat) : String :=
+  let sorted := r.proofHeads.toArray.qsort fun (name1, freq1) (name2, freq2) => freq1 > freq2 || (freq1 == freq2 && name1 < name2)
+  Elab.WF.GuessLex.formatTable <|
+    #[#["proof heads", "count"]] ++ (sorted.take n).map fun (c, k) => #[c, toString k]
 
 def renderReport (r : Report) : String :=
   let iters := r.iters
