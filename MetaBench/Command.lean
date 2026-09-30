@@ -294,7 +294,8 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
     let unfolds := bench.kernelUnfolds.get opts
     logInfo m!"{label}:\n{renderReport report}\
       {if proofHeads == 0 then "" else "\n\n" ++ renderProofHeads report proofHeads}\
-      {if unfolds == 0 then "" else "\n\n" ++ renderKernelUnfolds report unfolds}"
+      {if unfolds == 0 then "" else "\n\n" ++ renderKernelUnfolds report unfolds}\
+      \n\n"
     emitJson (toJson report)
 
 end MetaBench
