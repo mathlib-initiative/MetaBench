@@ -107,16 +107,24 @@ structure Report where
   typeNodes : Nat
   /-- The number of distinct subterms of the proof headed by each constant. -/
   proofHeads : Std.TreeMap String Nat
+  /-- A frequency table recording the number of times the kernel unfolded declarations while checking the proof. -/
+  kernelUnfolds : Std.TreeMap String Nat
   /-- The samples of the warmup. -/
   warmup : PhaseSamples
   /-- The samples of every measured iteration. -/
   iters : Array PhaseSamples
   deriving ToJson, FromJson
 
-def renderProofHeads (r : Report) (n : Nat) : String :=
-  let sorted := r.proofHeads.toArray.qsort fun (name1, freq1) (name2, freq2) => freq1 > freq2 || (freq1 == freq2 && name1 < name2)
+/-- The `n` largest entries of `counts` under `title`, largest first, ties by name. -/
+def renderTop (title : String) (counts : Std.TreeMap String Nat compare) (n : Nat) : String :=
+  let sorted := counts.toArray.qsort fun (name1, freq1) (name2, freq2) =>
+    freq1 > freq2 || (freq1 == freq2 && name1 < name2)
   Elab.WF.GuessLex.formatTable <|
-    #[#["proof heads", "count"]] ++ (sorted.take n).map fun (c, k) => #[c, toString k]
+    #[#[title, "count"]] ++ (sorted.take n).map fun (c, k) => #[c, toString k]
+
+def renderProofHeads (r : Report) (n : Nat) : String := renderTop "proof heads" r.proofHeads n
+
+def renderKernelUnfolds (r : Report) (n : Nat) : String := renderTop "kernel unfolds" r.kernelUnfolds n
 
 def renderReport (r : Report) : String :=
   let iters := r.iters
