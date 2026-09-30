@@ -26,6 +26,7 @@ proof term: 53 nodes, kernel 827 ns/node
 ```
 
 With `set_option bench.proofHeads n` the report also lists the `n` most frequent head constants of the proof term.
+With `set_option bench.kernelUnfolds n` it lists the `n` declarations the kernel unfolded most often while checking it.
 
 ``` lean
 import MetaBench
@@ -92,6 +93,7 @@ Each object has the fields:
 - `options`: the options in force, as an object.
 - `proofNodes`, `typeNodes`: the number of distinct subterms of the proof and of the statement.
 - `proofHeads`: the number of distinct subterms of the proof headed by each constant.
+- `kernelUnfolds`: how many times the kernel unfolded each declaration while checking the proof.
 - `warmup`: the samples of the warmup, per phase.
 - `iters`: the samples of every measured iteration, per phase.
 

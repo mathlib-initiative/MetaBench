@@ -28,11 +28,14 @@ example : (2 : Nat) ^ 10 = 1024 := by decide
 
 When `bench.out` is set to a file path each benchmark run also appends a JSON object to the file:
 the label, the run's start time, the `bench.tag` option, the Lean version, the source file and line,
-the options in force, the node counts of the proof and the statement, the proof's head constants, and the
-raw samples of the warmup and of every iteration.
+the options in force, the node counts of the proof and the statement, the proof's head constants,
+the kernel's unfold counts, and the raw samples of the warmup and of every iteration.
 
-When `bench.proofHeads n` is set report also lists the `n` most frequent head
-constants of the proof term.
+When `bench.proofHeads n` is set the report also lists the `n` most frequent head constants of the proof
+term.
+
+When `bench.kernelUnfolds n` is set the report also lists the `n` most frequently unfolded
+declarations during kernel checking.
 -/
 
 open Lean Elab Command Term Meta
@@ -57,6 +60,11 @@ meta register_option bench.out : String := {
 meta register_option bench.proofHeads : Nat := {
   defValue := 0
   descr := "#benchmark: list the n most frequent head constants of the proof term (0: off)"
+}
+
+meta register_option bench.kernelUnfolds : Nat := {
+  defValue := 0
+  descr := "#benchmark: list the n most frequent declarations the kernel unfolded (0: off)"
 }
 
 meta register_option bench.tag : String := {
@@ -102,6 +110,21 @@ where
     | .letE _ t v b _ => go t; go v; go b
     | .mdata _ b | .proj _ _ b => go b
     | _ => pure ()
+
+/-- `after - before` per declaration, as a name-keyed map without zero entries. -/
+meta def counterDiff (before after : PHashMap Name Nat) : Std.TreeMap String Nat compare :=
+  after.foldl (init := {}) fun m n c =>
+    let c := c - (before.find? n).getD 0
+    if c == 0 then m else m.insert n.toString c
+
+/-- Return a frequency table recording the number of times the kernel unfolds each declaration when
+checking `thm`. -/
+meta def checkUnfolds (thm : TheoremVal) : TermElabM (Std.TreeMap String Nat compare) := do
+  let kenv := ((← getEnv).toKernelEnv.enableDiag true).resetDiag
+  let opts ← getOptions
+  match ← IO.lazyPure fun _ => kenv.addDecl opts (.thmDecl thm) none with
+  | .ok kenv => return counterDiff {} kenv.diagnostics.unfoldCounter
+  | .error ex => throwKernelException ex
 
 meta def emitJson (json : Json) : CoreM Unit := do
   let path := bench.out.get (← getOptions)
@@ -191,14 +214,26 @@ meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
 meta def runSample (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
   Core.withCurrHeartbeats (samplePhases spec)
 
-meta def runBenchmark (spec : Spec) : TermElabM (TheoremVal × PhaseSamples × Array PhaseSamples) := do
+structure BenchRun where
+  thm : TheoremVal
+  warmup : PhaseSamples
+  iters : Array PhaseSamples
+  /-- The kernel's unfolds for the declarations the warmup added, e.g. `decide +kernel`'s lemmas. -/
+  auxUnfolds : Std.TreeMap String Nat compare
+
+meta def runBenchmark (spec : Spec) : TermElabM BenchRun := do
   let iters := bench.iters.get (← getOptions)
   awaitPendingKernelChecks
 
-  -- warmup: commit the caches, discard its messages and info
+  -- warmup: commit the caches, discard its messages and info. It runs with `diagnostics` on in
+  -- order to count declaration unfolding.
   let messages := (← getThe Core.State).messages
   let info ← getInfoState
-  let (warmup, thm) ← runSample spec
+  let initEnv ← getEnv
+  let (warmup, thm) ← tryFinally (withOptions (diagnostics.set · true) (runSample spec))
+    (modifyEnv (Kernel.enableDiag · (Kernel.isDiagnosticsEnabled initEnv)))
+  let auxUnfolds := counterDiff (Kernel.getDiagnostics initEnv).unfoldCounter
+    (Kernel.getDiagnostics (← getEnv)).unfoldCounter
   modifyThe Core.State fun s => { s with messages }
   setInfoState info
 
@@ -206,7 +241,7 @@ meta def runBenchmark (spec : Spec) : TermElabM (TheoremVal × PhaseSamples × A
   for _ in [0:iters] do
     let (ps, _) ← withoutModifyingState (runSample spec)
     samples := samples.push ps
-  return (thm, warmup, samples)
+  return { thm, warmup, iters := samples, auxUnfolds }
 
 meta def parseDecl (decl : TSyntax ``Parser.Command.declaration) : CommandElabM Spec := do
   let (theoremId?, binders, goal?, val) ← match decl with
@@ -240,7 +275,9 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   let label := (label?.map (·.getString)).getD spec.label
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
-    let (thm, warmup, iterations) ← runBenchmark spec
+    let { thm, warmup, iters := iterations, auxUnfolds } ← runBenchmark spec
+    -- Before the declaration is added: the diagnostic check adds it to a kernel environment again.
+    let kernelUnfolds := (← checkUnfolds thm).foldl (fun m n c => m.insert n (m.getD n 0 + c)) auxUnfolds
     if spec.addDecl? then
       withOptions (debug.skipKernelTC.set · true) <| addDecl (.thmDecl thm)
     -- Share equal subterms first, so the counts are of distinct subterms.
@@ -251,11 +288,13 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
       file := ← getFileName, line := ((← getFileMap).toPosition (stx.getPos?.getD 0)).line
       options := optionsJson opts
       proofNodes := ← value.numObjs, typeNodes := ← (ShareCommon.shareCommon thm.type).numObjs
-      proofHeads := headConstants value
+      proofHeads := headConstants value, kernelUnfolds
       warmup, iters := iterations }
     let proofHeads := bench.proofHeads.get opts
+    let unfolds := bench.kernelUnfolds.get opts
     logInfo m!"{label}:\n{renderReport report}\
-      {if proofHeads == 0 then "" else "\n\n" ++ renderProofHeads report proofHeads}"
+      {if proofHeads == 0 then "" else "\n\n" ++ renderProofHeads report proofHeads}\
+      {if unfolds == 0 then "" else "\n\n" ++ renderKernelUnfolds report unfolds}"
     emitJson (toJson report)
 
 end MetaBench
