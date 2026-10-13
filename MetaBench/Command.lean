@@ -225,8 +225,8 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchRun := do
   let iters := bench.iters.get (← getOptions)
   awaitPendingKernelChecks
 
-  -- warmup: commit the caches, discard its messages and info. It runs with `diagnostics` on in
-  -- order to count declaration unfolding.
+  -- warmup: absorb first-use costs, discard its messages and info. It runs with `diagnostics` on
+  -- in order to count declaration unfolding.
   let messages := (← getThe Core.State).messages
   let info ← getInfoState
   let initEnv ← getEnv
@@ -239,7 +239,9 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchRun := do
 
   let mut samples : Array PhaseSamples := #[]
   for _ in [0:iters] do
-    let (ps, _) ← withoutModifyingState (runSample spec)
+    -- Each iteration starts as a fresh declaration would do, where the elaborator caches are empty
+    -- and `initEnv` is without the auxiliary lemmas the warmup added.
+    let (ps, _) ← withoutModifyingState <| withEnv initEnv <| withFreshCache <| runSample spec
     samples := samples.push ps
   return { thm, warmup, iters := samples, auxUnfolds }
 
