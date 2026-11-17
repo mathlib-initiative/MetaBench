@@ -36,6 +36,9 @@ term.
 
 When `bench.kernelUnfolds n` is set the report also lists the `n` most frequently unfolded
 declarations during kernel checking.
+
+When `bench.instructions` is set each phase also reports the CPU instructions used. This depends on
+the native library for Metabench.Perf being loaded.
 -/
 
 open Lean Elab Command Term Meta
@@ -70,6 +73,12 @@ meta register_option bench.kernelUnfolds : Nat := {
 meta register_option bench.tag : String := {
   defValue := ""
   descr := "#benchmark: a tag recorded with the JSON output, e.g. a git revision"
+}
+
+meta register_option bench.instructions : Bool := {
+  defValue := false
+  descr := "#benchmark: if set, count the number of CPU instructions per-benchmark.\
+    The native shared library associted with MetaBench.Perf must be laoded with `--load-dynlib`."
 }
 
 /-- The start time of this process, so every benchmark of one run carries the same `run` stamp. -/
@@ -193,17 +202,19 @@ meta def Spec.label (spec : Spec) : String :=
     else "example"
 
 /-- Sample all phases of a single theorem. Returns the `PhaseSamples` and the checked theorem. -/
-meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
+meta def samplePhases (spec : Spec) (instrCounter? : Option Perf.InstrCounter) :
+    TermElabM (PhaseSamples × TheoremVal) :=
   Term.withoutErrToSorry <| Term.withDeclName spec.declName <| Term.withLevelNames spec.levelNames do
-    let s0 ← Sample.now
+    let now := Sample.now instrCounter?
+    let s0 ← now
     Term.elabBinders spec.binders fun fvars => do
       let goal ← elabGoal spec.goal
-      let s1 ← Sample.now
+      let s1 ← now
       let proof ← elabProof spec.proof goal
       let thm ← mkTheorem spec.declName fvars goal proof
-      let s2 ← Sample.now
+      let s2 ← now
       kernelCheck thm
-      let s3 ← Sample.now
+      let s3 ← now
       let phases := fun
         | .goal => s1.sub s0
         | .proof => s2.sub s1
@@ -211,8 +222,9 @@ meta def samplePhases (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
       return (phases, thm)
 
 /-- One iteration under the ambient `maxHeartbeats`. -/
-meta def runSample (spec : Spec) : TermElabM (PhaseSamples × TheoremVal) :=
-  Core.withCurrHeartbeats (samplePhases spec)
+meta def runSample (spec : Spec) (instrCounter? : Option Perf.InstrCounter) :
+    TermElabM (PhaseSamples × TheoremVal) :=
+  Core.withCurrHeartbeats (samplePhases spec instrCounter?)
 
 structure BenchRun where
   thm : TheoremVal
@@ -221,7 +233,8 @@ structure BenchRun where
   /-- The kernel's unfolds for the declarations the warmup added, e.g. `decide +kernel`'s lemmas. -/
   auxUnfolds : Std.TreeMap String Nat compare
 
-meta def runBenchmark (spec : Spec) : TermElabM BenchRun := do
+/-- Run the warmup and the iterations, counting instructions with `instrCounter?` when there is one. -/
+meta def runBenchmark (spec : Spec) (instrCounter? : Option Perf.InstrCounter) : TermElabM BenchRun := do
   let iters := bench.iters.get (← getOptions)
   awaitPendingKernelChecks
 
@@ -230,7 +243,7 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchRun := do
   let messages := (← getThe Core.State).messages
   let info ← getInfoState
   let initEnv ← getEnv
-  let (warmup, thm) ← tryFinally (withOptions (diagnostics.set · true) (runSample spec))
+  let (warmup, thm) ← tryFinally (withOptions (diagnostics.set · true) (runSample spec instrCounter?))
     (modifyEnv (Kernel.enableDiag · (Kernel.isDiagnosticsEnabled initEnv)))
   let auxUnfolds := counterDiff (Kernel.getDiagnostics initEnv).unfoldCounter
     (Kernel.getDiagnostics (← getEnv)).unfoldCounter
@@ -241,7 +254,7 @@ meta def runBenchmark (spec : Spec) : TermElabM BenchRun := do
   for _ in [0:iters] do
     -- Each iteration starts as a fresh declaration would do, where the elaborator caches are empty
     -- and `initEnv` is without the auxiliary lemmas the warmup added.
-    let (ps, _) ← withoutModifyingState <| withEnv initEnv <| withFreshCache <| runSample spec
+    let (ps, _) ← withoutModifyingState <| withEnv initEnv <| withFreshCache <| runSample spec instrCounter?
     samples := samples.push ps
   return { thm, warmup, iters := samples, auxUnfolds }
 
@@ -277,7 +290,10 @@ public meta def elabBenchmarkCmd : CommandElab := fun stx => do
   let label := (label?.map (·.getString)).getD spec.label
   withScope (fun s => { s with opts := Elab.async.set s.opts false }) do
   runTermElabM fun _ => do
-    let { thm, warmup, iters := iterations, auxUnfolds } ← runBenchmark spec
+    -- The counter is opened here, on the thread that runs the benchmark, and closed after it.
+    let run := runBenchmark spec
+    let { thm, warmup, iters := iterations, auxUnfolds } ←
+      if bench.instructions.get (← getOptions) then Perf.withInstrCounter (run ∘ some) else run none
     -- Before the declaration is added: the diagnostic check adds it to a kernel environment again.
     let kernelUnfolds := (← checkUnfolds thm).foldl (fun m n c => m.insert n (m.getD n 0 + c)) auxUnfolds
     if spec.addDecl? then

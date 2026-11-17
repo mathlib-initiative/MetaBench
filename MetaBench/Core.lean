@@ -2,6 +2,7 @@ module
 
 public import Std.Time.Duration
 public import Lean.Data.Json
+public import MetaBench.Perf
 import Lean
 
 open Lean Elab Std.Time
@@ -11,21 +12,35 @@ namespace MetaBench
 public section
 
 /-- A `Sample` is a pair of a monotonic clock value (in nanoseconds) and the heartbeat count at that
-moment. -/
+moment, with the measuring thread's instruction count when instructions are counted. -/
 structure Sample where
   nanos : Nat
   heartbeats : Nat
-  deriving ToJson, FromJson
+  /-- A count of CPU instructions if they are counted. -/
+  instructions : Option Nat := none
+  deriving FromJson
 
-@[inline] def Sample.now : BaseIO Sample := do
-  return { nanos := ← IO.monoNanosNow, heartbeats := ← IO.getNumHeartbeats }
+instance : ToJson Sample where
+  toJson s := Json.mkObj <|
+    [("nanos", toJson s.nanos), ("heartbeats", toJson s.heartbeats)]
+      ++ Json.opt "instructions" s.instructions
+
+/-- The sample of this moment, with the count of `instrCounter?` when there is one. -/
+@[inline] def Sample.now (instrCounter? : Option Perf.InstrCounter) : IO Sample := do
+  return { nanos := ← IO.monoNanosNow
+           heartbeats := ← IO.getNumHeartbeats
+           instructions := ← instrCounter?.mapM (·.read) }
 
 /-- The interval from `earlier` to `later`. -/
 def Sample.sub (later earlier : Sample) : Sample :=
-  { nanos := later.nanos - earlier.nanos, heartbeats := later.heartbeats - earlier.heartbeats }
+  { nanos := later.nanos - earlier.nanos
+    heartbeats := later.heartbeats - earlier.heartbeats
+    instructions := (· - ·) <$> later.instructions <*> earlier.instructions }
 
 def Sample.add (s1 s2 : Sample) : Sample :=
-  { nanos := s1.nanos + s2.nanos, heartbeats := s1.heartbeats + s2.heartbeats }
+  { nanos := s1.nanos + s2.nanos
+    heartbeats := s1.heartbeats + s2.heartbeats
+    instructions := (· + ·) <$> s1.instructions <*> s2.instructions }
 
 /-- Elapsed time as a `Duration`, for display. -/
 def Sample.toDuration (s : Sample) : Duration := .ofNanoseconds (.ofNat s.nanos)
@@ -50,7 +65,7 @@ theorem Phase.mem_all (p : Phase) : p ∈ Phase.all :=
 abbrev PhaseSamples := Phase → Sample
 
 def PhaseSamples.total (ps : PhaseSamples) : Sample :=
-  Phase.all.foldl (fun acc p => acc.add (ps p) ) ⟨0, 0⟩
+  Phase.all.foldl (fun acc p => acc.add (ps p) ) { nanos := 0, heartbeats := 0, instructions := some 0 }
 
 /-- Format a float with `prec` digits after the decimal point. -/
 public def fmtFloat (x : Float) (precision : Nat := 2) : String :=
@@ -75,8 +90,9 @@ def summarize (xs : Array Nat) : Summary :=
   let sorted := xs.qsort (· < ·)
   { min := sorted[0]?.getD 0, median := sorted[sorted.size / 2]?.getD 0, max := sorted.back?.getD 0 }
 
-def Summary.cells (s : Summary) (iterations : Nat) (scale : Float) : Array String :=
-  let fmt (x : Nat) := fmtFloat (x.toFloat / scale)
+def Summary.cells (s : Summary) (iterations : Nat) (scale : Float) (precision : Nat := 2) :
+    Array String :=
+  let fmt (x : Nat) := fmtFloat (x.toFloat / scale) precision
   #[fmt s.median] ++ if iterations > 1 then #[fmt s.min ++ "…" ++ fmt s.max] else #[]
 
 instance : ToJson PhaseSamples where
@@ -131,10 +147,15 @@ def renderReport (r : Report) : String :=
   let proofNodes := r.proofNodes
   let n := iters.size
   let heading (unit : String) : Array String := #[unit] ++ if n > 1 then #["min…max"] else #[]
+  let instructions_counted := !iters.isEmpty && iters.all fun it => Phase.all.all fun p => (it p).instructions.isSome
   let header := #["phase"] ++ heading "kHB" ++ heading "ms"
+    ++ if instructions_counted then heading "Minstr" else #[]
   let row (name : String) (samples : Array Sample) : Array String :=
     #[name] ++ (summarize (samples.map (·.heartbeats))).cells n 1000.0
             ++ (summarize (samples.map (·.nanos))).cells n 1_000_000
+            ++ if instructions_counted then
+                (summarize (samples.map (·.instructions.getD 0))).cells n 1_000_000 (precision := 3)
+               else #[]
   let rows := #[header] ++ Phase.all.map (fun p => row p.name (iters.map (· p)))
     |>.push (row "total" (iters.map (·.total)))
   let kernelNs := (summarize (iters.map fun it => (it .kernel).nanos)).median

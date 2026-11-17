@@ -12,8 +12,7 @@ lean_lib MetaBench
 lean_lib Tests where
   globs := #[.submodules `Tests]
 
-/-- The system's half of the instruction counter, `native/perf_linux.c` or `native/perf_macos.c`,
-compiled with the system's C compiler. -/
+/-- Build the native code for the CPU instruction count feature -/
 target perfNative pkg : FilePath := do
   let src ←
     if Platform.isOSX then pure "perf_macos.c"
@@ -22,8 +21,6 @@ target perfNative pkg : FilePath := do
   let srcJob ← inputTextFile <| pkg.dir / "native" / src
   buildO (pkg.buildDir / "native" / "perf.o") srcJob (traceArgs := #["-O2", "-fPIC"])
 
-/-- The library that `lean --load-dynlib` loads for `bench.instructions`: `MetaBench.Perf` compiled
-to native code and linked with `perfNative`. -/
 @[default_target]
 target perfDynlib pkg : Dynlib := do
   let some mod ← findModule? `MetaBench.Perf | error "the module MetaBench.Perf is missing"
