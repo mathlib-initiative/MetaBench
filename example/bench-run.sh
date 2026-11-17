@@ -9,7 +9,7 @@ mathlib="${1:?usage: METABENCH=<harness> bench-run.sh <mathlib-dir> <suite.lean>
 suite="${2:?usage: METABENCH=<harness> bench-run.sh <mathlib-dir> <suite.lean> [lean args]}"
 shift 2
 
-if [ ! -f "$bench/lakefile.toml" ]; then
+if [ ! -f "$bench/lakefile.lean" ]; then
   echo "error: METABENCH=$bench is not the benchmark library checkout" >&2; exit 2
 fi
 if [ ! -f "$mathlib/.lake/build/lib/lean/Mathlib.olean" ]; then
