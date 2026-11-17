@@ -1,0 +1,47 @@
+name: Instruction counting
+
+# Runs example/Suites/Bignum.lean with `bench.instructions` on Linux and macOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  bignum:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show the machine
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            lscpu
+          else
+            sysctl -n machdep.cpu.brand_string
+            sw_vers
+          fi
+
+      # Ubuntu's default `kernel.perf_event_paranoid` refuses perf_event_open to unprivileged users.
+      - name: Allow perf_event_open
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.perf_event_paranoid=2
+
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: true
+          build-args: -q MetaBench perfDynlib
+
+      # The suite imports nothing from Mathlib, so it runs in this package's environment rather than
+      # through example/bench-run.sh, which needs a built Mathlib checkout.
+      - name: Run the Bignum suite
+        run: |
+          lake env lean -DElab.async=false --load-dynlib="$(lake query -q perfDynlib)" \
+            -Dbench.instructions=true example/Suites/Bignum.lean
