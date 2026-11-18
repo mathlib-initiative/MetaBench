@@ -7,8 +7,30 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            instructions: false
+          - os: macos-latest
+            instructions: false
+          # Of GitHub's runners, only the Linux ARM ones expose a CPU instruction counter.
+          - os: ubuntu-26.04-arm
+            instructions: true
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v5
+
+      # Ubuntu's default `kernel.perf_event_paranoid` refuses perf_event_open to unprivileged users.
+      - name: Allow perf_event_open
+        if: matrix.instructions
+        run: sudo sysctl -w kernel.perf_event_paranoid=2
+
       - uses: leanprover/lean-action@v1
+
+      - name: Run the Bignum suite
+        run: |
+          lake env lean -DElab.async=false --load-dynlib="$(lake query -q perfDynlib)" \
+            -Dbench.instructions=${{ matrix.instructions }} example/Suites/Bignum.lean
