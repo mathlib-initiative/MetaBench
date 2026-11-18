@@ -97,6 +97,31 @@ Each object has the fields:
 - `warmup`: the samples of the warmup, per phase.
 - `iters`: the samples of every measured iteration, per phase.
 
-A sample is `{"heartbeats": n, "nanos": n}` and the phases are `goal`, `proof` and `kernel`. The
-file loads into pandas with `pd.read_json(path, lines=True)`. On the Lean side the same record is
-`MetaBench.Report`, with `ToJson` and `FromJson` instances.
+A sample is `{"heartbeats": n, "nanos": n}` and the phases are `goal`, `proof` and `kernel`. When
+[instructions are counted](#counting-instructions) a sample also contains the `"instructions"` field. 
+
+## Counting CPU instructions
+
+Pass the `-Dbench.instructions=true` flag to count the CPU instructions run on each phase. Unlike
+heartbeats the count sees arithmetic on large numbers, and it varies less than the clock.
+
+```
+METABENCH=. example/bench-run.sh <mathlib-checkout> example/Suites/Det.lean -Dbench.instructions=true
+```
+
+The report has a `Minstr` column in units of millions of CPU instructions.
+
+This feature is provided as a native library in the `perfDynlib` target that lake builds with the
+system's C compiler. The path to the built shared library (which can be obtained using
+`lake query -q perfDynlib`) must be passed to lean using its `--load-dynlib` flag whenever the
+`-Dbench.instructions=true` flag is used.
+
+If a system C compiler is available then `example/bench-run.sh` automatically builds the `perfDynlib` target and passes `--load-dynlib`.
+
+The Linux and macOS implementations count instructions differently, so the numbers are not comparable with each other:
+
+- **Linux** ([`native/perf_linux.c`](native/perf_linux.c)) reads a hardware counter with
+  `perf_event_open`. Some CI and container hosts do not expose this counter and this feature will
+  not work in this case. `kernel.perf_event_paranoid` must be 2 or lower.
+- **macOS** ([`native/perf_macos.c`](native/perf_macos.c)) reads the kernel's count for the thread
+  with `thread_selfcounts`.
